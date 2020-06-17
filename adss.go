@@ -48,10 +48,6 @@ func Share(A AccessStructure, M, R, T []byte) ([]*SecretShare, error) {
 	}
 
 	// 3. Split the key into secret shares
-	// TODO: This sharing does not match the implementation described in the
-	// paper. It does not deterministically derive random coefficients or use the randomness in the L variable.
-	// We will need to reimplement sharing to match it, but this is sufficient for initial prototyping.
-	// Vault's implementation also uses random indexes instead of incrementing, the last byte is the x coordinate.
 	shares := make([]*SecretShare, A.n)
 	s1Shares, err := s1Share(A, K, R, T)
 	if err != nil {

@@ -23,14 +23,10 @@ func Test_s1SplitAnds1Recover(t *testing.T) {
 		t.Errorf("len(shares) = %d, expected: %d", len(shares), 3)
 	}
 
-	fmt.Println("msg", msg)
-	fmt.Println("retShare", shares[0].i, shares[0].secret)
-
 	recov, err := s1Recover(shares)
 	if err != nil {
 		t.Errorf("unexpected error on recovery: %s", err)
 	}
-	fmt.Println("rec", recov)
 
 	if !bytes.Equal(recov, msg) {
 		t.Errorf("recovered %x != %x", recov, msg)
