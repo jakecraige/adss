@@ -4,8 +4,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
-
-	"github.com/hashicorp/vault/shamir"
 )
 
 type AccessStructure struct {
@@ -55,19 +53,18 @@ func Share(A AccessStructure, M, R, T []byte) ([]*SecretShare, error) {
 	// We will need to reimplement sharing to match it, but this is sufficient for initial prototyping.
 	// Vault's implementation also uses random indexes instead of incrementing, the last byte is the x coordinate.
 	shares := make([]*SecretShare, A.n)
-	rawShares, err := shamir.Split(K[:], int(A.n), int(A.t))
+	s1Shares, err := s1Share(A, K, R, T)
 	if err != nil {
 		return nil, err
 	}
 
 	// 4. Construct final secret shares and return them
 	for i := range shares {
-		secLen := len(rawShares[i])
 		shares[i] = &SecretShare{
 			as:  A,
-			id:  uint8(rawShares[i][secLen-1]),
+			id:  s1Shares[i].i,
 			pub: struct{ C, D, J []byte }{C, D, J},
-			sec: rawShares[i],
+			sec: s1Shares[i].secret,
 			tag: T,
 		}
 	}
@@ -78,12 +75,17 @@ func Share(A AccessStructure, M, R, T []byte) ([]*SecretShare, error) {
 func Recover(shares []*SecretShare) ([]byte, error) {
 	// TODO: Lots needed here for verification purposes and error correction
 
-	rawShares := make([][]byte, len(shares))
+	s1Shares := make([]*s1SecretShare, len(shares))
 	for i, share := range shares {
-		rawShares[i] = share.sec
+		s1Shares[i] = &s1SecretShare{
+			i:      share.id,
+			t:      share.as.t,
+			n:      share.as.n,
+			secret: share.sec,
+		}
 	}
 
-	K, err := shamir.Combine(rawShares)
+	K, err := s1Recover(s1Shares)
 	if err != nil {
 		return nil, err
 	}

@@ -1,5 +1,5 @@
 module github.com/jakecraige/adss
 
-require github.com/hashicorp/vault v1.4.2
+require golang.org/x/crypto v0.0.0-20200117160349-530e935923ad
 
 go 1.14
