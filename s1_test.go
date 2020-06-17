@@ -2,7 +2,6 @@ package adss
 
 import (
 	"bytes"
-	"fmt"
 	"testing"
 )
 

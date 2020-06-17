@@ -1,9 +1,11 @@
 package adss
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
+	"fmt"
 )
 
 type AccessStructure struct {
@@ -21,6 +23,10 @@ func (as *AccessStructure) Bytes() []byte {
 	return bytes
 }
 
+func (as *AccessStructure) isValidIndex(idx uint8) bool {
+	return idx >= 0 && idx < as.n
+}
+
 type SecretShare struct {
 	as  AccessStructure // S.as
 	id  uint8           // S.id
@@ -31,6 +37,25 @@ type SecretShare struct {
 	tag []byte // S.tag
 }
 
+func (ss *SecretShare) Equal(other *SecretShare) bool {
+	return bytes.Equal(ss.Bytes(), other.Bytes())
+}
+
+func (ss *SecretShare) Bytes() []byte {
+	out := make([]byte, 0)
+  // TODO: This is currently an unrecoverable byte encoding since we have
+  // variable length message and associated data. We'll need to update this to
+  // be decodable later for serialization to disk purpoes.
+	out = append(out, ss.as.Bytes()...)
+	out = append(out, ss.id)
+	out = append(out, ss.pub.C...)
+	out = append(out, ss.pub.D...)
+	out = append(out, ss.pub.J...)
+	out = append(out, ss.sec...)
+	out = append(out, ss.tag...)
+	return out
+}
+
 // Share creates an ADSS secret sharing of the provided message and returns the shares or error.
 //
 // A: the acccess structure to split the message with
@@ -39,7 +64,7 @@ type SecretShare struct {
 // T: associated data authenticated during sharing
 func Share(A AccessStructure, M, R, T []byte) ([]*SecretShare, error) {
 	// 1. Hash the inputs to get J K L
-	J, K, _ := computeJKL(A, M, R, T)
+	J, K, L := computeJKL(A, M, R, T)
 
 	// 2. Encrypt the message and the randomness into C and D
 	C, D, err := xorKeyStreamTwoInputs(K[:], M, R)
@@ -49,7 +74,8 @@ func Share(A AccessStructure, M, R, T []byte) ([]*SecretShare, error) {
 
 	// 3. Split the key into secret shares
 	shares := make([]*SecretShare, A.n)
-	s1Shares, err := s1Share(A, K, R, T)
+	// TODO: What is the epsilon that is provided here in the paper?
+	s1Shares, err := s1Share(A, K, L, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -69,8 +95,6 @@ func Share(A AccessStructure, M, R, T []byte) ([]*SecretShare, error) {
 }
 
 func Recover(shares []*SecretShare) ([]byte, error) {
-	// TODO: Lots needed here for verification purposes and error correction
-
 	s1Shares := make([]*s1SecretShare, len(shares))
 	for i, share := range shares {
 		s1Shares[i] = &s1SecretShare{
@@ -86,12 +110,45 @@ func Recover(shares []*SecretShare) ([]byte, error) {
 		return nil, err
 	}
 
-	C := shares[0].pub.C
-	D := shares[0].pub.D
+	share0 := shares[0]
+	A, C, D, J, T := share0.as, share0.pub.C, share0.pub.D, share0.pub.J, share0.tag
 
-	M, _, err := xorKeyStreamTwoInputs(K, C, D)
+	M, R, err := xorKeyStreamTwoInputs(K, C, D)
 	if err != nil {
 		return nil, err
+	}
+
+	// Verify the integrity of the recovered params
+	// TODO: The paper mentions verifying the L value too, but we don't have it in
+	// the share output. Where does it come from? Is it supposed to be in the share.pub?
+	recovJ, recovK, _ := computeJKL(A, M, R, T)
+	if !bytes.Equal(recovJ, J) || !bytes.Equal(recovK, K) {
+		return nil, fmt.Errorf("invalid shares")
+	}
+
+	reshares, err := Share(A, M, R, T)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, share := range shares {
+		// verify the id is valid
+		if !A.isValidIndex(share.id) {
+			return nil, fmt.Errorf("invalid share, invalid index: %d", share.id)
+		}
+
+		// verify the share is one of the known shares when we recompute them
+		// from recovered data.
+		match := false
+		for _, reshare := range reshares {
+			if reshare.Equal(share) {
+				match = true
+				break
+			}
+		}
+		if !match {
+			return nil, fmt.Errorf("invalid share, no match found in resharing")
+		}
 	}
 
 	return M, nil

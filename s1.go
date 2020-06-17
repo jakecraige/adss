@@ -36,7 +36,7 @@ func s1Share(A AccessStructure, M, R, T []byte) ([]*s1SecretShare, error) {
 	shares := make([]*s1SecretShare, A.n)
 	for i, secret := range secrets {
 		shares[i] = &s1SecretShare{
-			i:      uint8(i + 1),
+			i:      uint8(i),
 			t:      A.t,
 			n:      A.n,
 			secret: secret,
@@ -63,7 +63,7 @@ func s1Recover(shares []*s1SecretShare) ([]byte, error) {
 		ySamples := make([]uint8, t)
 
 		for j, share := range shares {
-			xSamples[j] = share.i
+			xSamples[j] = share.i + 1 // +1 to account for how we evaluated it in sharing
 			ySamples[j] = share.secret[i]
 		}
 
