@@ -43,9 +43,9 @@ func (ss *SecretShare) Equal(other *SecretShare) bool {
 
 func (ss *SecretShare) Bytes() []byte {
 	out := make([]byte, 0)
-  // TODO: This is currently an unrecoverable byte encoding since we have
-  // variable length message and associated data. We'll need to update this to
-  // be decodable later for serialization to disk purpoes.
+	// TODO: This is currently an unrecoverable byte encoding since we have
+	// variable length message and associated data. We'll need to update this to
+	// be decodable later for serialization to disk purpoes.
 	out = append(out, ss.as.Bytes()...)
 	out = append(out, ss.id)
 	out = append(out, ss.pub.C...)
@@ -95,6 +95,163 @@ func Share(A AccessStructure, M, R, T []byte) ([]*SecretShare, error) {
 }
 
 func Recover(shares []*SecretShare) ([]byte, error) {
+	return exAxRecover(shares)
+}
+
+// exAxRecover implements the EX transform (figure 9) on top of the AX transform
+func exAxRecover(shares []*SecretShare) ([]byte, error) {
+	allShareSets, err := computeKPlausibleShareSets(shares)
+	if err != nil {
+		return nil, err
+	}
+
+	// Find the first explanation of these shares
+	var firstExplanationIdx int
+	var M []byte
+	for i, shares := range allShareSets {
+		M, err = axRecover(shares)
+
+		// NOTE: On line 81 in figure 9, we are told to verify that V = S_i, or that
+		// the recovered shares match the input shares. This is in fact already done
+		// within axRecover as described in figure 8 line 31B so we do not duplicate
+		// that here. The fact that axRecover does not error is sufficient to cover
+		// this check.
+		// TODO: Verify the above statement is accurate. I found this section
+		// a little difficult to understand how all the sets were interacting.
+		if err == nil {
+			// We have found our explanation so we break out of the loop.
+			firstExplanationIdx = i
+			break
+		}
+	}
+
+  // TODO: Need to identify which are the bad shares and identify them to the caller
+
+	// We now seek a second explanation of these shares that is different from the first.
+	// If we find one, there is an issue with the shares and we fail.
+	for _, shares := range allShareSets {
+    // Skip share sets that are subsets of the first valid one
+		if isSubset(shares, allShareSets[firstExplanationIdx]) {
+      continue
+    }
+
+		// TODO: Similar to the note about, we check the equivalence of the
+		// recovered message since validator of the shares is done within axRecover.
+		// We need to confirm this is acceptable.
+		Mprime, err := axRecover(shares)
+		if err != nil {
+			continue
+		}
+		if !bytes.Equal(M, Mprime) {
+			return nil, fmt.Errorf("invalid shares found")
+		}
+	}
+
+	return M, nil
+}
+
+
+func isSubset(subset, set []*SecretShare) bool {
+  if len(subset) > len(set) {
+    return false
+  }
+
+  for _, subsetItem := range subset {
+    found := false
+    for _, setItem := range set {
+      if subsetItem == setItem {
+        found = true
+        break
+      }
+    }
+
+    if !found { // if we cannot find one item, it is not a subset
+      return false
+    }
+  }
+
+  return true
+}
+
+func computeKPlausibleShareSets(shares []*SecretShare) ([][]*SecretShare, error) {
+	if len(shares) == 0 {
+		return nil, fmt.Errorf("no shares provided")
+	}
+
+	// First we validate consistency of the shares:
+	//   they have unique indexes, the same access structure, and tags
+	//   We don't check that the indexes are valid for the access structure as
+	//   this is done in axRecover already.
+	as, tag := shares[0].as, shares[0].tag
+	seenIndexes := map[uint8]bool{shares[0].id: true}
+	for _, share := range shares[1:] {
+		if share.as != as {
+			return nil, fmt.Errorf("shares have inconsistent access structure")
+		}
+
+		if !bytes.Equal(share.tag, tag) {
+			return nil, fmt.Errorf("shares have inconsistent tags")
+		}
+
+		if seenIndexes[share.id] {
+			return nil, fmt.Errorf("duplicate share id found")
+		}
+		seenIndexes[share.id] = true
+	}
+
+  // We compute all subsets of different sizes above the threshold to use for recovery.
+  // TODO: Need to confirm the expected ordering of these subsets and their
+  // interaction with skipping subsets of them in the error correcting logic.
+  out := make([][]*SecretShare, 0)
+  for i := int(as.t); i <= len(shares); i++ {
+    out = append(out, kSubsets(i, shares)...)
+  }
+	return out, nil
+}
+
+func kSubsets(k int, shares []*SecretShare) [][]*SecretShare {
+	if k > len(shares) {
+		panic(fmt.Sprintf("not enough shares to create subsets, k: %d, len: %d", k, len(shares)))
+	}
+
+	// If k is equal to the length, there are no subsets so we just return them.
+	if k == len(shares) {
+		return [][]*SecretShare{shares}
+	}
+
+	out := make([][]*SecretShare, 0)
+
+	// Triple nested for loops with index manipluation are always a bit complex to
+	// understand but I'll try to explain what this is doing here.
+	//
+	// It uses a psuedo-windowing strategy where we start at the first index and
+	// then try to find the next k-1 elements going forward in the list. We use
+	// k-1 because we always include the i-th element in the start of the set.
+	//
+	// By only going forward we are able to prevent creating any subsets which are
+	// permutations of existing ones.
+	for i := 0; i < len(shares); i++ {
+		for j := i + 1; j < len(shares); j++ {
+			// If this value is larger than the number of shares, we won't be able to
+			// find a total k shares for our subset, so we bail out.
+			if j+k-1 > len(shares) {
+				break
+			}
+
+			set := []*SecretShare{shares[i]}
+			for l := 0; l < k-1; l++ {
+				set = append(set, shares[j+l])
+			}
+
+			out = append(out, set)
+		}
+	}
+
+	return out
+}
+
+// axRecover implements the AX transform (figure 8) over the the base secret sharing scheme
+func axRecover(shares []*SecretShare) ([]byte, error) {
 	s1Shares := make([]*s1SecretShare, len(shares))
 	for i, share := range shares {
 		s1Shares[i] = &s1SecretShare{
