@@ -74,7 +74,6 @@ func Share(A AccessStructure, M, R, T []byte) ([]*SecretShare, error) {
 
 	// 3. Split the key into secret shares
 	shares := make([]*SecretShare, A.n)
-	// TODO: What is the epsilon that is provided here in the paper?
 	s1Shares, err := s1Share(A, K, L, nil)
 	if err != nil {
 		return nil, err
@@ -125,15 +124,21 @@ func exAxRecover(shares []*SecretShare) ([]byte, error) {
 		}
 	}
 
-  // TODO: Need to identify which are the bad shares and identify them to the caller
+	// If there is an error set when we get here, this means we did not find _any_
+	// explanation that successfully recovers, so we return the error.
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: Need to identify which are the bad shares and identify them to the caller
 
 	// We now seek a second explanation of these shares that is different from the first.
 	// If we find one, there is an issue with the shares and we fail.
 	for _, shares := range allShareSets {
-    // Skip share sets that are subsets of the first valid one
+		// Skip share sets that are subsets of the first valid one
 		if isSubset(shares, allShareSets[firstExplanationIdx]) {
-      continue
-    }
+			continue
+		}
 
 		// TODO: Similar to the note about, we check the equivalence of the
 		// recovered message since validator of the shares is done within axRecover.
@@ -150,27 +155,26 @@ func exAxRecover(shares []*SecretShare) ([]byte, error) {
 	return M, nil
 }
 
-
 func isSubset(subset, set []*SecretShare) bool {
-  if len(subset) > len(set) {
-    return false
-  }
+	if len(subset) > len(set) {
+		return false
+	}
 
-  for _, subsetItem := range subset {
-    found := false
-    for _, setItem := range set {
-      if subsetItem == setItem {
-        found = true
-        break
-      }
-    }
+	for _, subsetItem := range subset {
+		found := false
+		for _, setItem := range set {
+			if subsetItem == setItem {
+				found = true
+				break
+			}
+		}
 
-    if !found { // if we cannot find one item, it is not a subset
-      return false
-    }
-  }
+		if !found { // if we cannot find one item, it is not a subset
+			return false
+		}
+	}
 
-  return true
+	return true
 }
 
 func computeKPlausibleShareSets(shares []*SecretShare) ([][]*SecretShare, error) {
@@ -199,13 +203,13 @@ func computeKPlausibleShareSets(shares []*SecretShare) ([][]*SecretShare, error)
 		seenIndexes[share.id] = true
 	}
 
-  // We compute all subsets of different sizes above the threshold to use for recovery.
-  // TODO: Need to confirm the expected ordering of these subsets and their
-  // interaction with skipping subsets of them in the error correcting logic.
-  out := make([][]*SecretShare, 0)
-  for i := int(as.t); i <= len(shares); i++ {
-    out = append(out, kSubsets(i, shares)...)
-  }
+	// We compute all subsets of different sizes above the threshold to use for recovery.
+	// TODO: Need to confirm the expected ordering of these subsets and their
+	// interaction with skipping subsets of them in the error correcting logic.
+	out := make([][]*SecretShare, 0)
+	for i := int(as.t); i <= len(shares); i++ {
+		out = append(out, kSubsets(i, shares)...)
+	}
 	return out, nil
 }
 
@@ -276,8 +280,6 @@ func axRecover(shares []*SecretShare) ([]byte, error) {
 	}
 
 	// Verify the integrity of the recovered params
-	// TODO: The paper mentions verifying the L value too, but we don't have it in
-	// the share output. Where does it come from? Is it supposed to be in the share.pub?
 	recovJ, recovK, _ := computeJKL(A, M, R, T)
 	if !bytes.Equal(recovJ, J) || !bytes.Equal(recovK, K) {
 		return nil, fmt.Errorf("invalid shares")
