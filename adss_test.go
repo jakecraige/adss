@@ -43,7 +43,7 @@ func TestSplitAndRecover(t *testing.T) {
 	for _, tt := range successTests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			recov, err := Recover(tt.data)
+			recov, _, err := Recover(tt.data)
 
 			if err != nil {
 				t.Errorf("unexpected error on recovery: %s", err)
@@ -65,12 +65,12 @@ func TestSplitAndRecover(t *testing.T) {
 		{
 			"dup-share",
 			func() []*SecretShare { return []*SecretShare{shares[0], shares[0]} },
-			func() error { return fmt.Errorf("duplicate share id found") },
+			func() error { return fmt.Errorf("plausible shares: duplicate share id found") },
 		},
 		{
 			"no-shares",
 			func() []*SecretShare { return []*SecretShare{} },
-			func() error { return fmt.Errorf("no shares provided") },
+			func() error { return fmt.Errorf("plausible shares: no shares provided") },
 		},
 		{
 			"modified-as",
@@ -80,7 +80,7 @@ func TestSplitAndRecover(t *testing.T) {
 				return []*SecretShare{mod, shares[1]}
 			},
 			func() error {
-				return fmt.Errorf("shares have inconsistent access structure")
+				return fmt.Errorf("plausible shares: shares have inconsistent access structures")
 			},
 		},
 		{
@@ -91,7 +91,7 @@ func TestSplitAndRecover(t *testing.T) {
 				return []*SecretShare{mod, shares[1]}
 			},
 			func() error {
-				return fmt.Errorf("invalid shares")
+				return fmt.Errorf("recovery: checksum failed")
 			},
 		},
 		{"modified-C",
@@ -101,7 +101,7 @@ func TestSplitAndRecover(t *testing.T) {
 				return []*SecretShare{mod, shares[1]}
 			},
 			func() error {
-				return fmt.Errorf("invalid shares")
+				return fmt.Errorf("recovery: checksum failed")
 			},
 		},
 		{"modified-D",
@@ -111,7 +111,7 @@ func TestSplitAndRecover(t *testing.T) {
 				return []*SecretShare{mod, shares[1]}
 			},
 			func() error {
-				return fmt.Errorf("invalid shares")
+				return fmt.Errorf("recovery: checksum failed")
 			},
 		},
 		{"modified-J",
@@ -121,7 +121,7 @@ func TestSplitAndRecover(t *testing.T) {
 				return []*SecretShare{mod, shares[1]}
 			},
 			func() error {
-				return fmt.Errorf("invalid shares")
+				return fmt.Errorf("recovery: checksum failed")
 			},
 		},
 		{"modified-sec",
@@ -131,7 +131,7 @@ func TestSplitAndRecover(t *testing.T) {
 				return []*SecretShare{mod, shares[1]}
 			},
 			func() error {
-				return fmt.Errorf("invalid shares")
+				return fmt.Errorf("recovery: checksum failed")
 			},
 		},
 		{"modified-tag",
@@ -145,7 +145,7 @@ func TestSplitAndRecover(t *testing.T) {
 				return []*SecretShare{mod1, mod2}
 			},
 			func() error {
-				return fmt.Errorf("invalid shares")
+				return fmt.Errorf("recovery: checksum failed")
 			},
 		},
 		{"inconsistent-tag",
@@ -155,14 +155,35 @@ func TestSplitAndRecover(t *testing.T) {
 				return []*SecretShare{mod, shares[1]}
 			},
 			func() error {
-				return fmt.Errorf("shares have inconsistent tags")
+				return fmt.Errorf("plausible shares: shares have inconsistent tags")
+			},
+		},
+		{"multiple-explanations",
+			func() []*SecretShare {
+				as := NewAccessStructure(2, 5)
+				R1 := []byte("random1")
+				shares1, err := Share(as, msg, R1, ad)
+				if err != nil {
+					panic(err)
+				}
+
+				R2 := []byte("random2")
+				shares2, err := Share(as, msg, R2, ad)
+				if err != nil {
+					panic(err)
+				}
+
+				return []*SecretShare{shares1[0], shares1[1], shares2[2], shares2[3]}
+			},
+			func() error {
+				return fmt.Errorf("multiple explanations: {id:2, id:3} and {id:0, id:1}")
 			},
 		},
 	}
 	for _, tt := range errTests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Recover(tt.data())
+			_, _, err := Recover(tt.data())
 
 			expectedErr := tt.err()
 			if err == nil {
@@ -179,16 +200,26 @@ func TestSplitAndRecover(t *testing.T) {
 	// These tests verify that the message can be recovered in the presence of bad
 	// shares, as long as there are enough good ones.
 	var errRecoveryTests = []struct {
-		name string
-		msg  []byte
-		data func() []*SecretShare
+		name           string
+		msg            []byte
+		data           func() []*SecretShare
+		validShareIdxs []int
 	}{
 		{"modified-C", msg,
 			func() []*SecretShare {
 				mod := cloneShare(shares[0])
 				mod.pub.C[0] = mod.pub.C[0] + 1
+				return []*SecretShare{shares[1], mod, shares[2]}
+			},
+			[]int{0, 2},
+		},
+		{"modified-sec", msg,
+			func() []*SecretShare {
+				mod := cloneShare(shares[0])
+				mod.sec = []byte("this share is bad")
 				return []*SecretShare{mod, shares[1], shares[2]}
 			},
+			[]int{1, 2},
 		},
 		// TODO: Add more tests for error conditions, including
 		// assertions on identifying the bad shares.
@@ -196,16 +227,27 @@ func TestSplitAndRecover(t *testing.T) {
 	for _, tt := range errRecoveryTests {
 		tt := tt
 		t.Run(fmt.Sprintf("errRecovery: %s", tt.name), func(t *testing.T) {
-			recov, err := Recover(tt.data())
+			dat := tt.data()
+			recov, V, err := Recover(dat)
 
-			// TODO: This will likely change once we return bad share info, but this
-			// is all we can do for now.
 			if err != nil {
 				t.Errorf("unexpected error on recovery: %s", err)
 			}
 
 			if !bytes.Equal(recov, tt.msg) {
 				t.Errorf("recovered %x != %x", recov, tt.msg)
+			}
+
+			if len(V) < len(tt.validShareIdxs) {
+				t.Errorf("not enough valid shares returned: got %d expected: %d", len(V), len(tt.validShareIdxs))
+			}
+
+			for i, idx := range tt.validShareIdxs[:len(V)] {
+				returned := V[i].Bytes()
+				expected := dat[idx].Bytes()
+				if !bytes.Equal(returned, expected) {
+					t.Errorf("returned share \n%x \nwas supposed to be \n%x", returned, expected)
+				}
 			}
 		})
 	}

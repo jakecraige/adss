@@ -23,8 +23,9 @@ func (as *AccessStructure) Bytes() []byte {
 	return bytes
 }
 
-func (as *AccessStructure) isValidIndex(idx uint8) bool {
-	return idx >= 0 && idx < as.n
+func (as *AccessStructure) isSupportedIDSet(ids []uint8) bool {
+	// TODO: implement
+	return true
 }
 
 type SecretShare struct {
@@ -56,6 +57,15 @@ func (ss *SecretShare) Bytes() []byte {
 	return out
 }
 
+func (ss *SecretShare) toS1() *s1SecretShare {
+	return &s1SecretShare{
+		i:      ss.id,
+		t:      ss.as.t,
+		n:      ss.as.n,
+		secret: ss.sec,
+	}
+}
+
 // Share creates an ADSS secret sharing of the provided message and returns the shares or error.
 //
 // A: the acccess structure to split the message with
@@ -63,6 +73,8 @@ func (ss *SecretShare) Bytes() []byte {
 // R: random coins, might not be uniform
 // T: associated data authenticated during sharing
 func Share(A AccessStructure, M, R, T []byte) ([]*SecretShare, error) {
+	// TODO: Validate access structure params like t > 1 and t < n
+
 	// 1. Hash the inputs to get J K L
 	J, K, L := computeJKL(A, M, R, T)
 
@@ -93,33 +105,32 @@ func Share(A AccessStructure, M, R, T []byte) ([]*SecretShare, error) {
 	return shares, nil
 }
 
-func Recover(shares []*SecretShare) ([]byte, error) {
+func Recover(shares []*SecretShare) ([]byte, []*SecretShare, error) {
 	return exAxRecover(shares)
 }
 
 // exAxRecover implements the EX transform (figure 9) on top of the AX transform
-func exAxRecover(shares []*SecretShare) ([]byte, error) {
+func exAxRecover(shares []*SecretShare) ([]byte, []*SecretShare, error) {
 	allShareSets, err := computeKPlausibleShareSets(shares)
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("plausible shares: %w", err)
 	}
 
-	// Find the first explanation of these shares
+	// Find the first explanation using these shares
 	var firstExplanationIdx int
 	var M []byte
+	var V []*SecretShare
 	for i, shares := range allShareSets {
 		M, err = axRecover(shares)
 
 		// NOTE: On line 81 in figure 9, we are told to verify that V = S_i, or that
-		// the recovered shares match the input shares. This is in fact already done
-		// within axRecover as described in figure 8 line 31B so we do not duplicate
-		// that here. The fact that axRecover does not error is sufficient to cover
-		// this check.
-		// TODO: Verify the above statement is accurate. I found this section
-		// a little difficult to understand how all the sets were interacting.
+		// the valid shares from recovery match the input shares. We don't do that
+		// check here because axRecover doesn't have a way to return any valid
+		// shares that are different than what we provided.
 		if err == nil {
-			// We have found our explanation so we break out of the loop.
+			// Recovery worked so we have found the first valid explanation.
 			firstExplanationIdx = i
+			V = shares
 			break
 		}
 	}
@@ -127,32 +138,44 @@ func exAxRecover(shares []*SecretShare) ([]byte, error) {
 	// If there is an error set when we get here, this means we did not find _any_
 	// explanation that successfully recovers, so we return the error.
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("recovery: %w", err)
 	}
 
-	// TODO: Need to identify which are the bad shares and identify them to the caller
-
-	// We now seek a second explanation of these shares that is different from the first.
-	// If we find one, there is an issue with the shares and we fail.
-	for _, shares := range allShareSets {
-		// Skip share sets that are subsets of the first valid one
-		if isSubset(shares, allShareSets[firstExplanationIdx]) {
-			continue
-		}
-
-		// TODO: Similar to the note about, we check the equivalence of the
-		// recovered message since validator of the shares is done within axRecover.
-		// We need to confirm this is acceptable.
-		Mprime, err := axRecover(shares)
+	// We now seek a second explanation of these shares that is not a subset of
+	// the first, if we find one, we fail.
+	//
+	// We start at the first explanation+1 since we know the ones before that
+	// failed to recover since the previous logic stops when it finds the first
+	for _, Vprime := range allShareSets[firstExplanationIdx+1:] {
+		_, err := axRecover(Vprime)
 		if err != nil {
+			// If we error out when recovering, this means at least one the shares
+			// provided is bad. Since it didn't recover, we know this is alreadly
+			// excluded from the V set, so we just skip it.
 			continue
 		}
-		if !bytes.Equal(M, Mprime) {
-			return nil, fmt.Errorf("invalid shares found")
+
+		// If it recovers and is not a subset of the first, fail. In this case there
+		// are multiple ways to recover messages so we can't be sure which is
+		// correct so we must fail.
+		if !isSubset(Vprime, V) {
+			return nil, nil, fmt.Errorf("multiple explanations: %s and %s", sharesDesc(Vprime), sharesDesc(V))
 		}
 	}
 
-	return M, nil
+	return M, V, nil
+}
+
+func sharesDesc(shares []*SecretShare) string {
+	out := "{"
+	for i, share := range shares {
+		out += fmt.Sprintf("id:%d", share.id)
+		if i != len(shares)-1 {
+			out += ", "
+		}
+	}
+	out += "}"
+	return out
 }
 
 func isSubset(subset, set []*SecretShare) bool {
@@ -163,7 +186,9 @@ func isSubset(subset, set []*SecretShare) bool {
 	for _, subsetItem := range subset {
 		found := false
 		for _, setItem := range set {
-			if subsetItem == setItem {
+			// We use the Equal method to check this so that we are comparing the
+			// data itself rather than the pointers.
+			if subsetItem.Equal(setItem) {
 				found = true
 				break
 			}
@@ -190,7 +215,7 @@ func computeKPlausibleShareSets(shares []*SecretShare) ([][]*SecretShare, error)
 	seenIndexes := map[uint8]bool{shares[0].id: true}
 	for _, share := range shares[1:] {
 		if share.as != as {
-			return nil, fmt.Errorf("shares have inconsistent access structure")
+			return nil, fmt.Errorf("shares have inconsistent access structures")
 		}
 
 		if !bytes.Equal(share.tag, tag) {
@@ -203,11 +228,10 @@ func computeKPlausibleShareSets(shares []*SecretShare) ([][]*SecretShare, error)
 		seenIndexes[share.id] = true
 	}
 
-	// We compute all subsets of different sizes above the threshold to use for recovery.
-	// TODO: Need to confirm the expected ordering of these subsets and their
-	// interaction with skipping subsets of them in the error correcting logic.
+	// We compute all subsets of different sizes above the threshold to use for recovery,
+	// ordering it such that the subsets with the most elements are first.
 	out := make([][]*SecretShare, 0)
-	for i := int(as.t); i <= len(shares); i++ {
+	for i := len(shares); i >= int(as.t); i-- {
 		out = append(out, kSubsets(i, shares)...)
 	}
 	return out, nil
@@ -258,12 +282,7 @@ func kSubsets(k int, shares []*SecretShare) [][]*SecretShare {
 func axRecover(shares []*SecretShare) ([]byte, error) {
 	s1Shares := make([]*s1SecretShare, len(shares))
 	for i, share := range shares {
-		s1Shares[i] = &s1SecretShare{
-			i:      share.id,
-			t:      share.as.t,
-			n:      share.as.n,
-			secret: share.sec,
-		}
+		s1Shares[i] = share.toS1()
 	}
 
 	K, err := s1Recover(s1Shares)
@@ -282,32 +301,26 @@ func axRecover(shares []*SecretShare) ([]byte, error) {
 	// Verify the integrity of the recovered params
 	recovJ, recovK, _ := computeJKL(A, M, R, T)
 	if !bytes.Equal(recovJ, J) || !bytes.Equal(recovK, K) {
-		return nil, fmt.Errorf("invalid shares")
+		return nil, fmt.Errorf("checksum failed")
 	}
 
+	// Ensure that this combination of share IDs is supported by the access structure
+	shareIDs := make([]uint8, len(shares))
+	for i, share := range shares {
+		shareIDs[i] = share.id
+	}
+	if !A.isSupportedIDSet(shareIDs) {
+		return nil, fmt.Errorf("unsupported share ids: %v", shareIDs)
+	}
+
+	// Verify that the shares provided are a subset of all shares. We regenerate
+	// all shares using the recovered data.
 	reshares, err := Share(A, M, R, T)
 	if err != nil {
 		panic(err)
 	}
-
-	for _, share := range shares {
-		// verify the id is valid
-		if !A.isValidIndex(share.id) {
-			return nil, fmt.Errorf("invalid share, invalid index: %d", share.id)
-		}
-
-		// verify the share is one of the known shares when we recompute them
-		// from recovered data.
-		match := false
-		for _, reshare := range reshares {
-			if reshare.Equal(share) {
-				match = true
-				break
-			}
-		}
-		if !match {
-			return nil, fmt.Errorf("invalid share, no match found in resharing")
-		}
+	if !isSubset(shares, reshares) {
+		return nil, fmt.Errorf("not a subset of resharing")
 	}
 
 	return M, nil
