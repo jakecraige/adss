@@ -1,20 +1,21 @@
 # Adept Secret Sharing (ADSS)
 
-A CLI tool and library implementation of dept secret sharing (ADSS) as described
+A CLI tool and library implementation of adept secret sharing (ADSS) as described
 by Bellare, Dai and Rogaway.
 
 ## Usage
 
 ### CLI
 
-Install by downloading pre-build binaries on the releases pages or it install
-from source with `go install github.com/jakecraige/adss`.
+Install by downloading pre-built binaries on the [releases
+page](https://github.com/jakecraige/adss/releases) or it install from source
+with `go install github.com/jakecraige/adss`.
 
 ```sh
 # Split the secret into a 2-of-3 sharing. First we create a file with the
 # secret, it can be of any type, not just txt.
 $ echo "some secret" > /tmp/secret.txt
-$ bin/adss split -threshold 2 -count 3 -out-dir /tmp -secret-path secret.txt
+$ adss split -threshold 2 -count 3 -out-dir /tmp -secret-path secret.txt
 Share written to: tmp/share-0.json
 Share written to: tmp/share-1.json
 Share written to: tmp/share-2.json
@@ -22,21 +23,21 @@ Complete.
 
 # We can recover by providing all shares. It prints to stdout in base64 by
 # default, so we decode it with base64 for this example.
-$ bin/adss recover --share-paths /tmp/share-0.json,/tmp/share-1.json,/tmp/share-2.json | base64 -d
+$ adss recover --share-paths /tmp/share-0.json,/tmp/share-1.json,/tmp/share-2.json | base64 -d
 some secret
 
 # We can also store the result in a file
-$ bin/adss recover --share-paths /tmp/share-0.json,/tmp/share-1.json,/tmp/share-2.json -out-path /tmp/recovered-secret.txt
+$ adss recover --share-paths /tmp/share-0.json,/tmp/share-1.json,/tmp/share-2.json -out-path /tmp/recovered-secret.txt
 $ cat /tmp/recovered-secret.txt
 some secret
 
 # We can also recover by providing only two
-$ bin/adss recover --share-paths /tmp/share-0.json,/tmp/share-1.json | base64 -d
+$ adss recover --share-paths /tmp/share-0.json,/tmp/share-1.json | base64 -d
 some secret
 
 # If we manually modify the secret value of one of the shares and attempt
 # recovery, we are warned about the invalid share but we still recover it.
-$ bin/adss recover --share-paths /tmp/share-0.json,/tmp/share-1.json,/tmp/share-2-modified.json | base64 -d
+$ adss recover --share-paths /tmp/share-0.json,/tmp/share-1.json,/tmp/share-2-modified.json | base64 -d
 WARN: Invalid share at ./tmp/share-2-modified.json
 some secret
 ```
