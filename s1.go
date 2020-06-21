@@ -16,29 +16,29 @@ func s1Share(A AccessStructure, M, R, T []byte) ([]*s1SecretShare, error) {
 	// Use HKDF-SHA256 as our PRF, keying it with the provided randomness
 	prf := hkdf.New(sha256.New, R, nil, T)
 
-	secrets := make([][]byte, A.n)
+	secrets := make([][]byte, A.N)
 	for i := range secrets {
 		secrets[i] = make([]byte, len(M))
 	}
 
 	for i, msgBlock := range M { // for each message block
-		poly, err := makePolynomial(msgBlock, A.t-1, prf)
+		poly, err := makePolynomial(msgBlock, A.T-1, prf)
 		if err != nil {
 			return nil, err
 		}
 
-		for j := 0; j < int(A.n); j++ { // create shares for each party
+		for j := 0; j < int(A.N); j++ { // create shares for each party
 			// We use j+1 here since we don't want to evaluate at 0, as that's the secret :)
 			secrets[j][i] = poly.evaluate(uint8(j + 1))
 		}
 	}
 
-	shares := make([]*s1SecretShare, A.n)
+	shares := make([]*s1SecretShare, A.N)
 	for i, secret := range secrets {
 		shares[i] = &s1SecretShare{
 			i:      uint8(i),
-			t:      A.t,
-			n:      A.n,
+			t:      A.T,
+			n:      A.N,
 			secret: secret,
 		}
 	}

@@ -2,7 +2,6 @@ package adss
 
 import (
 	"bytes"
-	"crypto/rand"
 	"fmt"
 	"testing"
 )
@@ -10,14 +9,9 @@ import (
 func TestSplitAndRecover(t *testing.T) {
 	msg := []byte("hello world")
 
-	R := make([]byte, 32)
-	if _, err := rand.Read(R); err != nil {
-		panic(err)
-	}
-
 	as := NewAccessStructure(2, 3)
 	ad := []byte("some associated data")
-	shares, err := Share(as, msg, R, ad)
+	shares, err := Share(as, msg, ad)
 
 	if err != nil {
 		t.Errorf("unexpected error on sharing: %s", err)
@@ -65,7 +59,7 @@ func TestSplitAndRecover(t *testing.T) {
 		{
 			"dup-share",
 			func() []*SecretShare { return []*SecretShare{shares[0], shares[0]} },
-			func() error { return fmt.Errorf("plausible shares: duplicate share id found") },
+			func() error { return fmt.Errorf("plausible shares: duplicate share ID found") },
 		},
 		{
 			"no-shares",
@@ -76,7 +70,7 @@ func TestSplitAndRecover(t *testing.T) {
 			"modified-as",
 			func() []*SecretShare {
 				mod := cloneShare(shares[0])
-				mod.as.t = mod.as.t + 1
+				mod.As.T = mod.As.T + 1
 				return []*SecretShare{mod, shares[1]}
 			},
 			func() error {
@@ -87,7 +81,7 @@ func TestSplitAndRecover(t *testing.T) {
 			"modified-id",
 			func() []*SecretShare {
 				mod := cloneShare(shares[0])
-				mod.id = mod.as.n - 1
+				mod.ID = mod.As.N - 1
 				return []*SecretShare{mod, shares[1]}
 			},
 			func() error {
@@ -97,7 +91,7 @@ func TestSplitAndRecover(t *testing.T) {
 		{"modified-C",
 			func() []*SecretShare {
 				mod := cloneShare(shares[0])
-				mod.pub.C[0] = mod.pub.C[0] + 1
+				mod.Pub.C[0] = mod.Pub.C[0] + 1
 				return []*SecretShare{mod, shares[1]}
 			},
 			func() error {
@@ -107,7 +101,7 @@ func TestSplitAndRecover(t *testing.T) {
 		{"modified-D",
 			func() []*SecretShare {
 				mod := cloneShare(shares[0])
-				mod.pub.D[0] = mod.pub.D[0] + 1
+				mod.Pub.D[0] = mod.Pub.D[0] + 1
 				return []*SecretShare{mod, shares[1]}
 			},
 			func() error {
@@ -117,7 +111,7 @@ func TestSplitAndRecover(t *testing.T) {
 		{"modified-J",
 			func() []*SecretShare {
 				mod := cloneShare(shares[0])
-				mod.pub.J[0] = mod.pub.J[0] + 1
+				mod.Pub.J[0] = mod.Pub.J[0] + 1
 				return []*SecretShare{mod, shares[1]}
 			},
 			func() error {
@@ -127,7 +121,7 @@ func TestSplitAndRecover(t *testing.T) {
 		{"modified-sec",
 			func() []*SecretShare {
 				mod := cloneShare(shares[0])
-				mod.sec[0] = mod.sec[0] + 1
+				mod.Sec[0] = mod.Sec[0] + 1
 				return []*SecretShare{mod, shares[1]}
 			},
 			func() error {
@@ -139,9 +133,9 @@ func TestSplitAndRecover(t *testing.T) {
 				// We need to modify both to be the same value so that we don't get the
 				// inconsistent tags error.
 				mod1 := cloneShare(shares[0])
-				mod1.tag[0] = mod1.tag[0] + 1
+				mod1.Tag[0] = mod1.Tag[0] + 1
 				mod2 := cloneShare(shares[1])
-				mod2.tag[0] = mod1.tag[0]
+				mod2.Tag[0] = mod1.Tag[0]
 				return []*SecretShare{mod1, mod2}
 			},
 			func() error {
@@ -151,7 +145,7 @@ func TestSplitAndRecover(t *testing.T) {
 		{"inconsistent-tag",
 			func() []*SecretShare {
 				mod := cloneShare(shares[0])
-				mod.tag[0] = mod.tag[0] + 1
+				mod.Tag[0] = mod.Tag[0] + 1
 				return []*SecretShare{mod, shares[1]}
 			},
 			func() error {
@@ -161,14 +155,12 @@ func TestSplitAndRecover(t *testing.T) {
 		{"multiple-explanations",
 			func() []*SecretShare {
 				as := NewAccessStructure(2, 5)
-				R1 := []byte("random1")
-				shares1, err := Share(as, msg, R1, ad)
+				shares1, err := Share(as, msg, ad)
 				if err != nil {
 					panic(err)
 				}
 
-				R2 := []byte("random2")
-				shares2, err := Share(as, msg, R2, ad)
+				shares2, err := Share(as, msg, ad)
 				if err != nil {
 					panic(err)
 				}
@@ -176,7 +168,7 @@ func TestSplitAndRecover(t *testing.T) {
 				return []*SecretShare{shares1[0], shares1[1], shares2[2], shares2[3]}
 			},
 			func() error {
-				return fmt.Errorf("multiple explanations: {id:2, id:3} and {id:0, id:1}")
+				return fmt.Errorf("multiple explanations: {ID:2, ID:3} and {ID:0, ID:1}")
 			},
 		},
 	}
@@ -208,7 +200,7 @@ func TestSplitAndRecover(t *testing.T) {
 		{"modified-C", msg,
 			func() []*SecretShare {
 				mod := cloneShare(shares[0])
-				mod.pub.C[0] = mod.pub.C[0] + 1
+				mod.Pub.C[0] = mod.Pub.C[0] + 1
 				return []*SecretShare{shares[1], mod, shares[2]}
 			},
 			[]int{0, 2},
@@ -216,13 +208,11 @@ func TestSplitAndRecover(t *testing.T) {
 		{"modified-sec", msg,
 			func() []*SecretShare {
 				mod := cloneShare(shares[0])
-				mod.sec = []byte("this share is bad")
+				mod.Sec = []byte("this share is bad")
 				return []*SecretShare{mod, shares[1], shares[2]}
 			},
 			[]int{1, 2},
 		},
-		// TODO: Add more tests for error conditions, including
-		// assertions on identifying the bad shares.
 	}
 	for _, tt := range errRecoveryTests {
 		tt := tt
@@ -254,14 +244,14 @@ func TestSplitAndRecover(t *testing.T) {
 }
 
 func cloneShare(share *SecretShare) *SecretShare {
-	out := &SecretShare{id: share.id, as: share.as}
-	out.pub = struct{ C, D, J []byte }{
-		append([]byte{}, share.pub.C...),
-		append([]byte{}, share.pub.D...),
-		append([]byte{}, share.pub.J...),
+	out := &SecretShare{ID: share.ID, As: share.As}
+	out.Pub = struct{ C, D, J []byte }{
+		append([]byte{}, share.Pub.C...),
+		append([]byte{}, share.Pub.D...),
+		append([]byte{}, share.Pub.J...),
 	}
-	out.sec = append([]byte{}, share.sec...)
-	out.tag = append([]byte{}, share.tag...)
+	out.Sec = append([]byte{}, share.Sec...)
+	out.Tag = append([]byte{}, share.Tag...)
 	return out
 }
 
@@ -282,7 +272,7 @@ func Test_kSubsets(t *testing.T) {
 		t.Run(fmt.Sprintf("%d-subset of len %d", tt.k, len(tt.input)), func(t *testing.T) {
 			shares := make([]*SecretShare, len(tt.input))
 			for i := range shares {
-				shares[i] = &SecretShare{id: uint8(tt.input[i])}
+				shares[i] = &SecretShare{ID: uint8(tt.input[i])}
 			}
 
 			subsets := kSubsets(tt.k, shares)
@@ -290,7 +280,7 @@ func Test_kSubsets(t *testing.T) {
 			for _, subset := range subsets {
 				actual += "{"
 				for _, share := range subset {
-					actual += fmt.Sprintf("%d,", share.id)
+					actual += fmt.Sprintf("%d,", share.ID)
 				}
 				actual += "},"
 			}

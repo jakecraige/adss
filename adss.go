@@ -4,38 +4,39 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
 )
 
 type AccessStructure struct {
-	t, n uint8
+	T, N uint8
 }
 
 func NewAccessStructure(t, n uint8) AccessStructure {
-	return AccessStructure{t: t, n: n}
+	return AccessStructure{T: t, N: n}
 }
 
 func (as *AccessStructure) Bytes() []byte {
 	bytes := make([]byte, 2)
-	bytes[0] = as.t
-	bytes[1] = as.n
+	bytes[0] = as.T
+	bytes[1] = as.N
 	return bytes
 }
 
-func (as *AccessStructure) isSupportedIDSet(ids []uint8) bool {
+func (as *AccessStructure) isSupportedIDSet(IDs []uint8) bool {
 	// TODO: implement
 	return true
 }
 
 type SecretShare struct {
-	as  AccessStructure // S.as
-	id  uint8           // S.id
-	pub struct {        // S.pub
+	As  AccessStructure // S.as
+	ID  uint8           // S.ID
+	Pub struct {        // S.Pub
 		C, D, J []byte
 	}
-	sec []byte // S.sec
-	tag []byte // S.tag
+	Sec []byte // S.Sec
+	Tag []byte // S.Tag
 }
 
 func (ss *SecretShare) Equal(other *SecretShare) bool {
@@ -47,32 +48,41 @@ func (ss *SecretShare) Bytes() []byte {
 	// TODO: This is currently an unrecoverable byte encoding since we have
 	// variable length message and associated data. We'll need to update this to
 	// be decodable later for serialization to disk purpoes.
-	out = append(out, ss.as.Bytes()...)
-	out = append(out, ss.id)
-	out = append(out, ss.pub.C...)
-	out = append(out, ss.pub.D...)
-	out = append(out, ss.pub.J...)
-	out = append(out, ss.sec...)
-	out = append(out, ss.tag...)
+	out = append(out, ss.As.Bytes()...)
+	out = append(out, ss.ID)
+	out = append(out, ss.Pub.C...)
+	out = append(out, ss.Pub.D...)
+	out = append(out, ss.Pub.J...)
+	out = append(out, ss.Sec...)
+	out = append(out, ss.Tag...)
 	return out
 }
 
 func (ss *SecretShare) toS1() *s1SecretShare {
 	return &s1SecretShare{
-		i:      ss.id,
-		t:      ss.as.t,
-		n:      ss.as.n,
-		secret: ss.sec,
+		i:      ss.ID,
+		t:      ss.As.T,
+		n:      ss.As.N,
+		secret: ss.Sec,
 	}
 }
 
-// Share creates an ADSS secret sharing of the provided message and returns the shares or error.
+// Share creates an ADSS Secret sharing of the provIDed message and returns the shares or error.
 //
 // A: the acccess structure to split the message with
 // M: message
 // R: random coins, might not be uniform
 // T: associated data authenticated during sharing
-func Share(A AccessStructure, M, R, T []byte) ([]*SecretShare, error) {
+func Share(A AccessStructure, M, T []byte) ([]*SecretShare, error) {
+	R := make([]byte, 32)
+	if _, err := rand.Read(R); err != nil {
+		return nil, err
+	}
+
+	return internalShare(A, M, R, T)
+}
+
+func internalShare(A AccessStructure, M, R, T []byte) ([]*SecretShare, error) {
 	// TODO: Validate access structure params like t > 1 and t < n
 
 	// 1. Hash the inputs to get J K L
@@ -84,21 +94,21 @@ func Share(A AccessStructure, M, R, T []byte) ([]*SecretShare, error) {
 		return nil, err
 	}
 
-	// 3. Split the key into secret shares
-	shares := make([]*SecretShare, A.n)
+	// 3. Split the key into Secret shares
+	shares := make([]*SecretShare, A.N)
 	s1Shares, err := s1Share(A, K, L, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// 4. Construct final secret shares and return them
+	// 4. Construct final Secret shares and return them
 	for i := range shares {
 		shares[i] = &SecretShare{
-			as:  A,
-			id:  s1Shares[i].i,
-			pub: struct{ C, D, J []byte }{C, D, J},
-			sec: s1Shares[i].secret,
-			tag: T,
+			As:  A,
+			ID:  s1Shares[i].i,
+			Pub: struct{ C, D, J []byte }{C, D, J},
+			Sec: s1Shares[i].secret,
+			Tag: T,
 		}
 	}
 
@@ -117,40 +127,40 @@ func exAxRecover(shares []*SecretShare) ([]byte, []*SecretShare, error) {
 	}
 
 	// Find the first explanation using these shares
-	var firstExplanationIdx int
+	var firstExplanationIDx int
 	var M []byte
 	var V []*SecretShare
 	for i, shares := range allShareSets {
 		M, err = axRecover(shares)
 
 		// NOTE: On line 81 in figure 9, we are told to verify that V = S_i, or that
-		// the valid shares from recovery match the input shares. We don't do that
-		// check here because axRecover doesn't have a way to return any valid
-		// shares that are different than what we provided.
+		// the valID shares from recovery match the input shares. We don't do that
+		// check here because axRecover doesn't have a way to return any valID
+		// shares that are different than what we provIDed.
 		if err == nil {
-			// Recovery worked so we have found the first valid explanation.
-			firstExplanationIdx = i
+			// Recovery worked so we have found the first valID explanation.
+			firstExplanationIDx = i
 			V = shares
 			break
 		}
 	}
 
-	// If there is an error set when we get here, this means we did not find _any_
+	// If there is an error set when we get here, this means we dID not find _any_
 	// explanation that successfully recovers, so we return the error.
 	if err != nil {
 		return nil, nil, fmt.Errorf("recovery: %w", err)
 	}
 
-	// We now seek a second explanation of these shares that is not a subset of
+	// We now seek a Second explanation of these shares that is not a subset of
 	// the first, if we find one, we fail.
 	//
 	// We start at the first explanation+1 since we know the ones before that
 	// failed to recover since the previous logic stops when it finds the first
-	for _, Vprime := range allShareSets[firstExplanationIdx+1:] {
+	for _, Vprime := range allShareSets[firstExplanationIDx+1:] {
 		_, err := axRecover(Vprime)
 		if err != nil {
 			// If we error out when recovering, this means at least one the shares
-			// provided is bad. Since it didn't recover, we know this is alreadly
+			// provIDed is bad. Since it dIDn't recover, we know this is alreadly
 			// excluded from the V set, so we just skip it.
 			continue
 		}
@@ -169,7 +179,7 @@ func exAxRecover(shares []*SecretShare) ([]byte, []*SecretShare, error) {
 func sharesDesc(shares []*SecretShare) string {
 	out := "{"
 	for i, share := range shares {
-		out += fmt.Sprintf("id:%d", share.id)
+		out += fmt.Sprintf("ID:%d", share.ID)
 		if i != len(shares)-1 {
 			out += ", "
 		}
@@ -207,31 +217,31 @@ func computeKPlausibleShareSets(shares []*SecretShare) ([][]*SecretShare, error)
 		return nil, fmt.Errorf("no shares provided")
 	}
 
-	// First we validate consistency of the shares:
-	//   they have unique indexes, the same access structure, and tags
-	//   We don't check that the indexes are valid for the access structure as
+	// First we valIDate consistency of the shares:
+	//   they have unique indexes, the same access structure, and Tags
+	//   We don't check that the indexes are valID for the access structure as
 	//   this is done in axRecover already.
-	as, tag := shares[0].as, shares[0].tag
-	seenIndexes := map[uint8]bool{shares[0].id: true}
+	as, Tag := shares[0].As, shares[0].Tag
+	seenIndexes := map[uint8]bool{shares[0].ID: true}
 	for _, share := range shares[1:] {
-		if share.as != as {
+		if share.As != as {
 			return nil, fmt.Errorf("shares have inconsistent access structures")
 		}
 
-		if !bytes.Equal(share.tag, tag) {
+		if !bytes.Equal(share.Tag, Tag) {
 			return nil, fmt.Errorf("shares have inconsistent tags")
 		}
 
-		if seenIndexes[share.id] {
-			return nil, fmt.Errorf("duplicate share id found")
+		if seenIndexes[share.ID] {
+			return nil, fmt.Errorf("duplicate share ID found")
 		}
-		seenIndexes[share.id] = true
+		seenIndexes[share.ID] = true
 	}
 
 	// We compute all subsets of different sizes above the threshold to use for recovery,
 	// ordering it such that the subsets with the most elements are first.
 	out := make([][]*SecretShare, 0)
-	for i := len(shares); i >= int(as.t); i-- {
+	for i := len(shares); i >= int(as.T); i-- {
 		out = append(out, kSubsets(i, shares)...)
 	}
 	return out, nil
@@ -278,7 +288,7 @@ func kSubsets(k int, shares []*SecretShare) [][]*SecretShare {
 	return out
 }
 
-// axRecover implements the AX transform (figure 8) over the the base secret sharing scheme
+// axRecover implements the AX transform (figure 8) over the the base Secret sharing scheme
 func axRecover(shares []*SecretShare) ([]byte, error) {
 	s1Shares := make([]*s1SecretShare, len(shares))
 	for i, share := range shares {
@@ -291,7 +301,7 @@ func axRecover(shares []*SecretShare) ([]byte, error) {
 	}
 
 	share0 := shares[0]
-	A, C, D, J, T := share0.as, share0.pub.C, share0.pub.D, share0.pub.J, share0.tag
+	A, C, D, J, T := share0.As, share0.Pub.C, share0.Pub.D, share0.Pub.J, share0.Tag
 
 	M, R, err := xorKeyStreamTwoInputs(K, C, D)
 	if err != nil {
@@ -307,15 +317,15 @@ func axRecover(shares []*SecretShare) ([]byte, error) {
 	// Ensure that this combination of share IDs is supported by the access structure
 	shareIDs := make([]uint8, len(shares))
 	for i, share := range shares {
-		shareIDs[i] = share.id
+		shareIDs[i] = share.ID
 	}
 	if !A.isSupportedIDSet(shareIDs) {
-		return nil, fmt.Errorf("unsupported share ids: %v", shareIDs)
+		return nil, fmt.Errorf("unsupported share IDs: %v", shareIDs)
 	}
 
 	// Verify that the shares provided are a subset of all shares. We regenerate
 	// all shares using the recovered data.
-	reshares, err := Share(A, M, R, T)
+	reshares, err := internalShare(A, M, R, T)
 	if err != nil {
 		panic(err)
 	}

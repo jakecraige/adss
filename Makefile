@@ -26,6 +26,9 @@ $(BIN)/%: | $(BIN) ; $(info $(M) building $(PACKAGE)…)
 		|| ret=$$?; \
 	   git checkout go.mod go.sum; exit $$ret
 
+GORELEASER = $(BIN)/goreleaser
+$(BIN)/goreleaser: PACKAGE=github.com/goreleaser/goreleaser
+
 GOIMPORTS = $(BIN)/goimports
 $(BIN)/goimports: PACKAGE=golang.org/x/tools/cmd/goimports
 
@@ -56,7 +59,7 @@ check: check-fmt test-race ## Run all checks
 
 .PHONY: clean
 clean: ; $(info $(M) cleaning…)	@ ## Cleanup everything
-	$Q rm -rf $(BIN)
+	$Q rm -rf $(BIN) dist
 
 .PHONY: help
 help:
@@ -66,3 +69,15 @@ help:
 .PHONY: version
 version:
 	@echo $(VERSION)
+
+.PHONY: bin/adss
+bin/adss: ## Build the adss binary to bin/adss
+	$(GO) build -o ./bin/adss ./cmd/adss
+
+.PHONY: release/latest
+release-latest: | $(GORELEASER) ## Compile and release the latest version
+	$(GORELEASER) --snapshot
+
+.PHONY: release/test
+release-test: | $(GORELEASER) @ ## Test creating a release build
+	$(GORELEASER) --snapshot --skip-publish --rm-dist
