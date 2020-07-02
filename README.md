@@ -1,7 +1,9 @@
 # Adept Secret Sharing (ADSS)
 
 A CLI tool and library implementation of adept secret sharing (ADSS) as described
-by Bellare, Dai and Rogaway.
+by Bellare, Dai and Rogaway in [Reimagining Secret Sharing: Creating a Safer and
+More Versatile Primitive by Adding Authenticity, Correcting Errors, and Reducing
+Randomness Requirements](https://eprint.iacr.org/2020/800).
 
 ## Usage
 
